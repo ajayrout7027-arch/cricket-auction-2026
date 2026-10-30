@@ -5,7 +5,7 @@ import {
   Eye, CheckCircle2, XCircle, Award, Lock, LogOut, KeyRound, 
   AlertTriangle, Shuffle, Layers, Dices, Shirt, Rocket, Clock,
   Crown, UserPlus, Trash2, ListPlus, ShieldPlus, PlusCircle,
-  Sliders, Settings, Download, FileUp, Sparkles
+  Sliders, Settings, Download, FileUp, Sparkles, RefreshCw
 } from "lucide-react";
 import { db } from "./firebase";
 import { ref, onValue, set } from "firebase/database";
@@ -279,7 +279,74 @@ export default function App() {
     setRole("spectator");
   };
 
-  // Robust Add Player Handler
+  // ==========================================================
+  // FULL AUCTION RESET HANDLER
+  // ==========================================================
+  const handleResetAuction = () => {
+    const confirmReset = window.confirm(
+      "⚠️ DANGER: Are you sure you want to completely RESET the auction?\n\n" +
+      "This will:\n" +
+      "• Reset all franchise purses to their initial values\n" +
+      "• Clear all squad rosters and captains\n" +
+      "• Reset all player statuses back to 'UP_FOR_BID'\n" +
+      "• Return all connected screens to the Setup Lobby"
+    );
+
+    if (!confirmReset) return;
+
+    // Reset teams to fresh state with full initial purses and empty squad rosters
+    const resetTeams = teams.map((t) => ({
+      ...t,
+      purse: t.initialPurse || 1000000,
+      players: [],
+      captainId: null
+    }));
+
+    // Reset all players to unsold fresh state
+    const resetPlayers = players.map((p) => ({
+      ...p,
+      status: "UP_FOR_BID",
+      soldPrice: 0,
+      soldTo: "",
+      round: 1,
+      isCaptain: false
+    }));
+
+    const resetState = {
+      auctionStarted: false,
+      isAcceleratedRound: false,
+      activePlayerId: "",
+      currentBid: 0,
+      leadingTeamId: "",
+      bidHistory: [],
+      timer: 30,
+      isTimerRunning: false,
+      hammerActive: false,
+      teams: resetTeams,
+      players: resetPlayers,
+      currentSlotIndex: 0
+    };
+
+    setAuctionStarted(false);
+    setIsAcceleratedRound(false);
+    setActivePlayerId(null);
+    setCurrentBid(0);
+    setLeadingTeamId(null);
+    setBidHistory([]);
+    setTimer(30);
+    setIsTimerRunning(false);
+    setHammerActive(false);
+    setTeams(resetTeams);
+    setPlayers(resetPlayers);
+    setCurrentSlotIndex(0);
+
+    syncToFirebase(resetState);
+    playTone(330, 0.4, "sawtooth");
+    setControlCenterOpen(false);
+    alert("Auction has been successfully reset to the Setup Lobby!");
+  };
+
+  // Add Player Handler
   const handleAddPlayer = (e) => {
     e.preventDefault();
     if (!newPlayerName.trim()) return;
@@ -1119,6 +1186,13 @@ Mohit Sharma,Bowlers & Spinners,Mystery Spinner,30000,19,40,21`;
                   >
                     <Shuffle className="w-3.5 h-3.5" /> Re-Shuffle
                   </button>
+                  <button
+                    onClick={handleResetAuction}
+                    className="px-3 py-1.5 bg-rose-500/20 hover:bg-rose-500/30 border border-rose-500/40 text-rose-300 text-xs font-bold rounded-xl flex items-center gap-1.5 transition"
+                    title="Reset the entire auction back to the lobby"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5" /> Reset Auction
+                  </button>
                 </div>
               )}
             </section>
@@ -1324,6 +1398,16 @@ Mohit Sharma,Bowlers & Spinners,Mystery Spinner,30000,19,40,21`;
                         <Shuffle className="w-3.5 h-3.5" /> Skip / Draw Random Next
                       </button>
                       <span className="text-slate-500 font-medium">{currentSlotRemainingCount} left in slot</span>
+                    </div>
+
+                    {/* Quick Reset in Gavel Deck */}
+                    <div className="mt-3 pt-3 border-t border-slate-800 flex justify-end">
+                      <button
+                        onClick={handleResetAuction}
+                        className="text-[11px] text-rose-400/80 hover:text-rose-300 hover:underline flex items-center gap-1 font-semibold"
+                      >
+                        <RefreshCw className="w-3 h-3" /> Reset Tournament to Lobby
+                      </button>
                     </div>
                   </div>
                 )}
@@ -1781,7 +1865,11 @@ Mohit Sharma,Bowlers & Spinners,Mystery Spinner,30000,19,40,21`;
                             <span className="text-[10px] text-slate-500 italic">Has Players</span>
                           ) : (
                             <button
-                              onClick={() => handleRemoveTeam(t.id)}
+                              onClick={() => {
+                                const updated = teams.filter((team) => team.id !== t.id);
+                                setTeams(updated);
+                                syncToFirebase({ teams: updated });
+                              }}
                               className="p-1.5 text-rose-400 hover:bg-rose-500/10 rounded-lg transition"
                               title="Delete Team"
                             >
@@ -1954,9 +2042,9 @@ Mohit Sharma,Bowlers & Spinners,Mystery Spinner,30000,19,40,21`;
               </div>
             )}
 
-            {/* TAB 5: RULES */}
+            {/* TAB 5: RULES & DANGER ZONE */}
             {activeTab === "rules" && (
-              <div className="flex-1 p-4 bg-slate-950 rounded-2xl border border-slate-800 my-4 space-y-5">
+              <div className="flex-1 p-4 bg-slate-950 rounded-2xl border border-slate-800 my-4 space-y-5 overflow-y-auto">
                 <div>
                   <h4 className="text-sm font-extrabold text-white uppercase tracking-wider mb-1">
                     Global Tournament Rules
@@ -2009,6 +2097,22 @@ Mohit Sharma,Bowlers & Spinners,Mystery Spinner,30000,19,40,21`;
 
                 <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-300 text-xs">
                   Safe max bid formula: <b>Safe Bid = Team Purse - (Remaining Slots to reach {maxRosterSize} × ₹{minSlotReservePrice.toLocaleString("en-IN")})</b>
+                </div>
+
+                {/* DANGER ZONE - AUCTION RESET */}
+                <div className="mt-6 pt-5 border-t border-slate-800">
+                  <h4 className="text-xs font-black uppercase text-rose-400 tracking-wider mb-1 flex items-center gap-1.5">
+                    <AlertTriangle className="w-4 h-4" /> Danger Zone: Tournament Reset
+                  </h4>
+                  <p className="text-xs text-slate-400 mb-3">
+                    If you are conducting test runs or need to restart the entire auction from scratch, clicking this button restores all franchise purses, clears all bought rosters and captains, and returns to the pre-auction lobby.
+                  </p>
+                  <button
+                    onClick={handleResetAuction}
+                    className="px-4 py-2.5 bg-rose-600 hover:bg-rose-500 text-white font-black text-xs uppercase tracking-wider rounded-xl transition flex items-center gap-2 shadow-lg shadow-rose-600/20"
+                  >
+                    <RefreshCw className="w-4 h-4" /> Reset Entire Auction to Lobby
+                  </button>
                 </div>
               </div>
             )}
