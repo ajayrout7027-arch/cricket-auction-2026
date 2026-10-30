@@ -28,10 +28,10 @@ const DEFAULT_TEAMS = [
 ];
 
 const DEFAULT_PLAYERS = [
-  { id: "p1", name: "Sudhir Kumar", category: "Pure Batsmen", role: "Top-Order Batsman", basePrice: 40000, stats: { matches: 22, runs: 580, sr: 135.0, wickets: 3 }, status: "UP_FOR_BID", soldPrice: 0, soldTo: null, round: 1, isCaptain: false },
-  { id: "p2", name: "Ajay Rout", category: "All-Rounders", role: "Pace All-Rounder", basePrice: 50000, stats: { matches: 28, runs: 640, sr: 142.5, wickets: 24, econ: 7.2 }, status: "UP_FOR_BID", soldPrice: 0, soldTo: null, round: 1, isCaptain: false },
-  { id: "p3", name: "Santosh Verma", category: "Wicketkeepers", role: "Wicketkeeper / Bat", basePrice: 40000, stats: { matches: 25, runs: 490, sr: 128.4, catches: 18, stumping: 6 }, status: "UP_FOR_BID", soldPrice: 0, soldTo: null, round: 1, isCaptain: false },
-  { id: "p4", name: "Shivashish", category: "Bowlers & Spinners", role: "Strike Bowler", basePrice: 30000, stats: { matches: 20, wickets: 29, econ: 6.8, runs: 75 }, status: "UP_FOR_BID", soldPrice: 0, soldTo: null, round: 1, isCaptain: false }
+  { id: "p1", name: "Sudhir Kumar", category: "Pure Batsmen", role: "Top-Order Batsman", basePrice: 40000, stats: { matches: 22, runs: 580, wickets: 3 }, status: "UP_FOR_BID", soldPrice: 0, soldTo: "", round: 1, isCaptain: false },
+  { id: "p2", name: "Ajay Rout", category: "All-Rounders", role: "Pace All-Rounder", basePrice: 50000, stats: { matches: 28, runs: 640, wickets: 24 }, status: "UP_FOR_BID", soldPrice: 0, soldTo: "", round: 1, isCaptain: false },
+  { id: "p3", name: "Santosh Verma", category: "Wicketkeepers", role: "Wicketkeeper / Bat", basePrice: 40000, stats: { matches: 25, runs: 490, wickets: 0 }, status: "UP_FOR_BID", soldPrice: 0, soldTo: "", round: 1, isCaptain: false },
+  { id: "p4", name: "Shivashish", category: "Bowlers & Spinners", role: "Strike Bowler", basePrice: 30000, stats: { matches: 20, runs: 75, wickets: 29 }, status: "UP_FOR_BID", soldPrice: 0, soldTo: "", round: 1, isCaptain: false }
 ];
 
 const shuffleArray = (arr) => {
@@ -48,7 +48,7 @@ export default function App() {
   const [authenticatedRole, setAuthenticatedRole] = useState(null);
   const [authenticatedTeamId, setAuthenticatedTeamId] = useState(null);
 
-  // Core Auction State (Synced across Firebase)
+  // Core Auction State
   const [auctionStarted, setAuctionStarted] = useState(false);
   const [maxRosterSize, setMaxRosterSize] = useState(11);
   const [minSlotReservePrice, setMinSlotReservePrice] = useState(20000);
@@ -67,7 +67,7 @@ export default function App() {
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [hammerActive, setHammerActive] = useState(false);
 
-  // Modals & Tabs
+  // Modals
   const [pinModalOpen, setPinModalOpen] = useState(false);
   const [targetLoginRole, setTargetLoginRole] = useState(null);
   const [selectedTeamForLogin, setSelectedTeamForLogin] = useState("");
@@ -75,7 +75,7 @@ export default function App() {
   const [pinError, setPinError] = useState("");
 
   const [controlCenterOpen, setControlCenterOpen] = useState(false);
-  const [activeTab, setActiveTab] = useState("slots"); // 'slots' | 'teams' | 'players' | 'rules' | 'bulk'
+  const [activeTab, setActiveTab] = useState("slots");
 
   // Form Inputs
   const [newSlotName, setNewSlotName] = useState("");
@@ -97,66 +97,80 @@ export default function App() {
   const audioCtxRef = useRef(null);
   const isSyncingFromRemote = useRef(false);
 
-  // ==========================================================
-  // FIREBASE REALTIME DATABASE SYNC
-  // ==========================================================
-  useEffect(() => {
-    const auctionStateRef = ref(db, "auctionState");
-    const unsubscribe = onValue(auctionStateRef, (snapshot) => {
-      const data = snapshot.val();
-      if (data) {
-        isSyncingFromRemote.current = true;
-        setAuctionStarted(Boolean(data.auctionStarted));
-        setMaxRosterSize(data.maxRosterSize || 11);
-        setMinSlotReservePrice(data.minSlotReservePrice || 20000);
-        if (data.slots) setSlots(data.slots);
-        if (data.teams) setTeams(data.teams);
-        if (data.players) setPlayers(data.players);
-        if (data.shuffledSlots) setShuffledSlots(data.shuffledSlots);
-        setCurrentSlotIndex(data.currentSlotIndex || 0);
-        setIsAcceleratedRound(Boolean(data.isAcceleratedRound));
-        setActivePlayerId(data.activePlayerId || null);
-        setCurrentBid(data.currentBid || 0);
-        setLeadingTeamId(data.leadingTeamId || null);
-        setBidHistory(data.bidHistory || []);
-        setTimer(data.timer !== undefined ? data.timer : 30);
-        setIsTimerRunning(Boolean(data.isTimerRunning));
-        setHammerActive(Boolean(data.hammerActive));
-        setTimeout(() => {
-          isSyncingFromRemote.current = false;
-        }, 50);
-      }
-    });
+  // Sync to Firebase with undefined sanitization
+  const syncToFirebase = (patch = {}) => {
+    if (!db || isSyncingFromRemote.current) return;
+    try {
+      const currentState = {
+        auctionStarted,
+        maxRosterSize,
+        minSlotReservePrice,
+        slots,
+        teams,
+        players,
+        shuffledSlots,
+        currentSlotIndex,
+        isAcceleratedRound,
+        activePlayerId: activePlayerId || "",
+        currentBid,
+        leadingTeamId: leadingTeamId || "",
+        bidHistory,
+        timer,
+        isTimerRunning,
+        hammerActive,
+        ...patch
+      };
 
-    return () => unsubscribe();
+      const cleanPayload = JSON.parse(JSON.stringify(currentState));
+      set(ref(db, "auctionState"), cleanPayload).catch((err) => {
+        console.warn("Firebase sync write error:", err);
+      });
+    } catch (err) {
+      console.warn("Firebase sync payload error:", err);
+    }
+  };
+
+  // Firebase Remote Listener
+  useEffect(() => {
+    if (!db) return;
+    try {
+      const auctionStateRef = ref(db, "auctionState");
+      const unsubscribe = onValue(auctionStateRef, (snapshot) => {
+        const data = snapshot.val();
+        if (data) {
+          isSyncingFromRemote.current = true;
+          setAuctionStarted(Boolean(data.auctionStarted));
+          setMaxRosterSize(data.maxRosterSize || 11);
+          setMinSlotReservePrice(data.minSlotReservePrice || 20000);
+          if (data.slots && Array.isArray(data.slots)) setSlots(data.slots);
+          if (data.teams && Array.isArray(data.teams)) setTeams(data.teams);
+          if (data.players && Array.isArray(data.players)) setPlayers(data.players);
+          if (data.shuffledSlots && Array.isArray(data.shuffledSlots)) setShuffledSlots(data.shuffledSlots);
+          setCurrentSlotIndex(data.currentSlotIndex || 0);
+          setIsAcceleratedRound(Boolean(data.isAcceleratedRound));
+          setActivePlayerId(data.activePlayerId || null);
+          setCurrentBid(data.currentBid || 0);
+          setLeadingTeamId(data.leadingTeamId || null);
+          setBidHistory(Array.isArray(data.bidHistory) ? data.bidHistory : []);
+          setTimer(data.timer !== undefined ? data.timer : 30);
+          setIsTimerRunning(Boolean(data.isTimerRunning));
+          setHammerActive(Boolean(data.hammerActive));
+          setTimeout(() => {
+            isSyncingFromRemote.current = false;
+          }, 50);
+        }
+      });
+      return () => unsubscribe();
+    } catch (e) {
+      console.warn("Firebase listener skipped:", e);
+    }
   }, []);
 
-  // Sync state mutation helper to Firebase
-  const syncToFirebase = (patch) => {
-    if (isSyncingFromRemote.current) return;
-    const currentState = {
-      auctionStarted,
-      maxRosterSize,
-      minSlotReservePrice,
-      slots,
-      teams,
-      players,
-      shuffledSlots,
-      currentSlotIndex,
-      isAcceleratedRound,
-      activePlayerId,
-      currentBid,
-      leadingTeamId,
-      bidHistory,
-      timer,
-      isTimerRunning,
-      hammerActive,
-      ...patch
-    };
-    set(ref(db, "auctionState"), currentState).catch((err) => {
-      console.warn("Firebase sync error (running offline mode):", err);
-    });
-  };
+  useEffect(() => {
+    if (slots.length > 0 && !newPlayerCategory) {
+      setNewPlayerCategory(slots[0].name);
+    }
+  }, [slots]);
 
   const activeSlot = isAcceleratedRound 
     ? { id: "ACCELERATED", name: "Accelerated Round 2" } 
@@ -265,7 +279,106 @@ export default function App() {
     setRole("spectator");
   };
 
-  // CSV Bulk Importer Logic
+  // Robust Add Player Handler
+  const handleAddPlayer = (e) => {
+    e.preventDefault();
+    if (!newPlayerName.trim()) return;
+
+    const categoryToAssign = newPlayerCategory || (slots[0] ? slots[0].name : "General");
+
+    const cleanStats = {
+      matches: Number(newPlayerMatches) || 0
+    };
+    if (newPlayerRuns !== "" && !isNaN(Number(newPlayerRuns))) {
+      cleanStats.runs = Number(newPlayerRuns);
+    }
+    if (newPlayerWickets !== "" && !isNaN(Number(newPlayerWickets))) {
+      cleanStats.wickets = Number(newPlayerWickets);
+    }
+
+    const newPlayer = {
+      id: "p_" + Date.now(),
+      name: newPlayerName.trim(),
+      category: categoryToAssign,
+      role: newPlayerRole.trim() || categoryToAssign,
+      basePrice: Number(newPlayerBasePrice) || minSlotReservePrice,
+      stats: cleanStats,
+      status: "UP_FOR_BID",
+      soldPrice: 0,
+      soldTo: "",
+      round: 1,
+      isCaptain: false
+    };
+
+    const updated = [...players, newPlayer];
+    setPlayers(updated);
+    syncToFirebase({ players: updated });
+
+    setNewPlayerName("");
+    setNewPlayerRole("");
+    setNewPlayerRuns("");
+    setNewPlayerWickets("");
+    playTone(550, 0.15, "sine");
+  };
+
+  // Remove Player Handler
+  const handleRemovePlayer = (playerId) => {
+    const target = players.find((p) => p.id === playerId);
+    if (!target) return;
+    if (target.isCaptain || target.status === "SOLD") {
+      alert("Cannot delete a player who is already allocated as Captain or Sold!");
+      return;
+    }
+    const updated = players.filter((p) => p.id !== playerId);
+    setPlayers(updated);
+    const patch = { players: updated };
+    if (activePlayerId === playerId) {
+      setActivePlayerId(null);
+      setCurrentBid(0);
+      patch.activePlayerId = "";
+      patch.currentBid = 0;
+    }
+    syncToFirebase(patch);
+  };
+
+  // Add Team Handler
+  const handleAddTeam = (e) => {
+    e.preventDefault();
+    if (!newTeamName.trim()) return;
+
+    const newTeam = {
+      id: "t_" + Date.now(),
+      name: newTeamName.trim(),
+      pin: newTeamPin.trim() || "0000",
+      purse: Number(newTeamPurse) || 1000000,
+      initialPurse: Number(newTeamPurse) || 1000000,
+      players: [],
+      border: newTeamBorder,
+      captainId: ""
+    };
+
+    const updatedTeams = [...teams, newTeam];
+    setTeams(updatedTeams);
+    syncToFirebase({ teams: updatedTeams });
+    setNewTeamName("");
+    setNewTeamPin("");
+    playTone(600, 0.1, "sine");
+  };
+
+  // Remove Team Handler
+  const handleRemoveTeam = (teamId) => {
+    const target = teams.find((t) => t.id === teamId);
+    if (!target) return;
+    if (target.players && target.players.length > 0) {
+      alert(`Cannot delete ${target.name} because they already have squad members!`);
+      return;
+    }
+    const updated = teams.filter((t) => t.id !== teamId);
+    setTeams(updated);
+    syncToFirebase({ teams: updated });
+  };
+
+  // Bulk CSV Import Handler
   const handleBulkCsvImport = () => {
     if (!csvText.trim()) return;
     const lines = csvText.trim().split("\n");
@@ -273,7 +386,6 @@ export default function App() {
     const discoveredSlots = new Set(slots.map(s => s.name));
 
     lines.forEach((line, index) => {
-      // Skip header if present
       if (index === 0 && line.toLowerCase().includes("name") && line.toLowerCase().includes("category")) {
         return;
       }
@@ -285,10 +397,14 @@ export default function App() {
         const role = parts[2] || category;
         const basePrice = Number(parts[3]) || minSlotReservePrice;
         const matches = Number(parts[4]) || 0;
-        const runs = parts[5] ? Number(parts[5]) : undefined;
-        const wickets = parts[6] ? Number(parts[6]) : undefined;
+        const runs = parts[5] && !isNaN(Number(parts[5])) ? Number(parts[5]) : undefined;
+        const wickets = parts[6] && !isNaN(Number(parts[6])) ? Number(parts[6]) : undefined;
 
         discoveredSlots.add(category);
+
+        const cleanStats = { matches };
+        if (runs !== undefined) cleanStats.runs = runs;
+        if (wickets !== undefined) cleanStats.wickets = wickets;
 
         parsedPlayers.push({
           id: `p_${Date.now()}_${index}`,
@@ -296,14 +412,10 @@ export default function App() {
           category,
           role,
           basePrice,
-          stats: {
-            matches,
-            ...(runs !== undefined && { runs }),
-            ...(wickets !== undefined && { wickets })
-          },
+          stats: cleanStats,
           status: "UP_FOR_BID",
           soldPrice: 0,
-          soldTo: null,
+          soldTo: "",
           round: 1,
           isCaptain: false
         });
@@ -328,7 +440,7 @@ export default function App() {
     alert(`Successfully imported ${parsedPlayers.length} players!`);
   };
 
-  // Export Final Tournament Summary to CSV
+  // Export CSV Handler
   const handleExportCsv = () => {
     let csvContent = "data:text/csv;charset=utf-8,";
     csvContent += "Type,Player Name,Role,Category,Team,Winning Bid (INR),Status\n";
@@ -356,7 +468,6 @@ export default function App() {
     document.body.removeChild(link);
   };
 
-  // Load Sample CSV Data
   const loadSampleCsv = () => {
     const sample = `Sudhir Kumar,Pure Batsmen,Top-Order Batsman,40000,22,580,3
 Ajay Rout,All-Rounders,Pace All-Rounder,50000,28,640,24
@@ -369,7 +480,7 @@ Mohit Sharma,Bowlers & Spinners,Mystery Spinner,30000,19,40,21`;
     setCsvText(sample);
   };
 
-  // Captain Designation
+  // Assign Captain Handler
   const handleAssignCaptain = (teamId, playerId) => {
     const targetPlayer = players.find((p) => p.id === playerId);
     const targetTeam = teams.find((t) => t.id === teamId);
@@ -402,9 +513,9 @@ Mohit Sharma,Bowlers & Spinners,Mystery Spinner,30000,19,40,21`;
     playTone(750, 0.2, "triangle");
   };
 
-  const allCaptainsAssigned = teams.length > 0 && teams.every((t) => t.captainId !== null);
+  const allCaptainsAssigned = teams.length > 0 && teams.every((t) => Boolean(t.captainId));
 
-  // Officially Start the Auction
+  // Start Auction Handler
   const handleStartAuction = () => {
     if (teams.length < 2) {
       alert("Please configure at least 2 teams before starting!");
@@ -440,9 +551,9 @@ Mohit Sharma,Bowlers & Spinners,Mystery Spinner,30000,19,40,21`;
       auctionStarted: true,
       shuffledSlots: randomized,
       currentSlotIndex: 0,
-      activePlayerId: firstPlayer ? firstPlayer.id : null,
+      activePlayerId: firstPlayer ? firstPlayer.id : "",
       currentBid: firstPlayer ? firstPlayer.basePrice : 0,
-      leadingTeamId: null,
+      leadingTeamId: "",
       bidHistory: [],
       timer: 30,
       isTimerRunning: false,
@@ -474,7 +585,7 @@ Mohit Sharma,Bowlers & Spinners,Mystery Spinner,30000,19,40,21`;
         const nextState = {
           activePlayerId: rand.id,
           currentBid: rand.basePrice,
-          leadingTeamId: null,
+          leadingTeamId: "",
           bidHistory: [],
           timer: 30,
           isTimerRunning: false
@@ -501,7 +612,7 @@ Mohit Sharma,Bowlers & Spinners,Mystery Spinner,30000,19,40,21`;
       const nextState = {
         activePlayerId: randPlayer.id,
         currentBid: randPlayer.basePrice,
-        leadingTeamId: null,
+        leadingTeamId: "",
         bidHistory: [],
         timer: 30,
         isTimerRunning: false
@@ -533,7 +644,7 @@ Mohit Sharma,Bowlers & Spinners,Mystery Spinner,30000,19,40,21`;
           currentSlotIndex: foundNextSlot,
           activePlayerId: chosen.id,
           currentBid: chosen.basePrice,
-          leadingTeamId: null,
+          leadingTeamId: "",
           bidHistory: [],
           timer: 30,
           isTimerRunning: false
@@ -551,7 +662,7 @@ Mohit Sharma,Bowlers & Spinners,Mystery Spinner,30000,19,40,21`;
     }
   };
 
-  // Place Bid
+  // Place Bid Handler
   const handlePlaceBid = (teamId, increment = DEFAULT_INCREMENT) => {
     if (!auctionStarted) return;
     const team = teams.find((t) => t.id === teamId);
@@ -597,7 +708,7 @@ Mohit Sharma,Bowlers & Spinners,Mystery Spinner,30000,19,40,21`;
     playTone(600, 0.1, "sine");
   };
 
-  // Hammer Sold Action
+  // Hammer Sold Handler
   const handleSold = () => {
     if (!leadingTeamId || !currentPlayer) return;
     setHammerActive(true);
@@ -608,7 +719,7 @@ Mohit Sharma,Bowlers & Spinners,Mystery Spinner,30000,19,40,21`;
 
     const updatedTeams = teams.map((t) =>
       t.id === leadingTeamId
-        ? { ...t, purse: t.purse - currentBid, players: [...(t.players || []), { ...currentPlayer, soldPrice: currentBid }] }
+        ? { ...t, purse: t.purse - currentBid, players: [...(t.players || []), { ...currentPlayer, soldPrice: currentBid, soldTo: winningTeam.name }] }
         : t
     );
 
@@ -632,7 +743,7 @@ Mohit Sharma,Bowlers & Spinners,Mystery Spinner,30000,19,40,21`;
     }, 1500);
   };
 
-  // Pass / Unsold Action
+  // Pass to Unsold Handler
   const handleUnsold = () => {
     if (!currentPlayer) return;
     playTone(180, 0.3, "square");
@@ -786,7 +897,7 @@ Mohit Sharma,Bowlers & Spinners,Mystery Spinner,30000,19,40,21`;
       {/* Main Container */}
       <main className="max-w-7xl mx-auto w-full p-4 md:p-6 flex-1 flex flex-col gap-5">
         
-        {/* Teams Mini Dashboard */}
+        {/* Teams Dashboard */}
         <section className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
           {teams.map((team) => {
             const elig = getTeamEligibility(team);
@@ -830,9 +941,7 @@ Mohit Sharma,Bowlers & Spinners,Mystery Spinner,30000,19,40,21`;
           })}
         </section>
 
-        {/* ============================================================ */}
-        {/* PRE-AUCTION LOBBY SCREEN */}
-        {/* ============================================================ */}
+        {/* PRE-AUCTION LOBBY */}
         {!auctionStarted ? (
           <div className="bg-slate-900/60 border border-slate-800 rounded-3xl p-6 md:p-10 shadow-2xl relative overflow-hidden flex flex-col gap-6">
             
@@ -851,7 +960,6 @@ Mohit Sharma,Bowlers & Spinners,Mystery Spinner,30000,19,40,21`;
                 </div>
               </div>
 
-              {/* Action Buttons for Auctioneer */}
               <div className="flex items-center gap-2">
                 {role === "auctioneer" && (
                   <>
@@ -877,7 +985,7 @@ Mohit Sharma,Bowlers & Spinners,Mystery Spinner,30000,19,40,21`;
               </div>
             </div>
 
-            {/* Captain Selection Cards */}
+            {/* Captain Allocation Cards */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
               {teams.map((team) => {
                 const assignedCaptain = players.find((p) => p.id === team.captainId);
@@ -959,11 +1067,8 @@ Mohit Sharma,Bowlers & Spinners,Mystery Spinner,30000,19,40,21`;
 
           </div>
         ) : (
-          /* ============================================================ */
-          /* LIVE AUCTION ARENA */
-          /* ============================================================ */
+          /* LIVE ARENA */
           <>
-            {/* Shuffled Category Slots Bar */}
             <section className="bg-slate-900/60 border border-slate-800 rounded-2xl p-3 flex flex-wrap items-center justify-between gap-3">
               <div className="flex flex-wrap items-center gap-2">
                 <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1">
@@ -1003,7 +1108,12 @@ Mohit Sharma,Bowlers & Spinners,Mystery Spinner,30000,19,40,21`;
                     <Settings className="w-3.5 h-3.5" /> Controls
                   </button>
                   <button
-                    onClick={handleReshuffleSlots}
+                    onClick={() => {
+                      const randomized = shuffleArray(slots);
+                      setShuffledSlots(randomized);
+                      setCurrentSlotIndex(0);
+                      pickNextRandomPlayer(players, 0, false, randomized);
+                    }}
                     className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 text-xs font-bold rounded-xl flex items-center gap-1.5 transition"
                     title="Randomly reshuffle remaining slots"
                   >
@@ -1013,7 +1123,7 @@ Mohit Sharma,Bowlers & Spinners,Mystery Spinner,30000,19,40,21`;
               )}
             </section>
 
-            {/* Accelerated Round 2 Trigger Banner */}
+            {/* Accelerated Round Banner */}
             {role === "auctioneer" && pendingInitialCount === 0 && totalUnsoldCount > 0 && !isAcceleratedRound && (
               <div className="bg-gradient-to-r from-purple-900/60 to-indigo-900/60 border border-purple-500/40 rounded-2xl p-4 flex flex-wrap items-center justify-between gap-4 shadow-xl">
                 <div>
@@ -1039,10 +1149,9 @@ Mohit Sharma,Bowlers & Spinners,Mystery Spinner,30000,19,40,21`;
               </div>
             )}
 
-            {/* Live Auction Centerpiece */}
+            {/* Podium */}
             <section className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
               
-              {/* Player Spotlight Card */}
               <div className="lg:col-span-7 bg-slate-900/70 border border-slate-800 rounded-2xl p-5 md:p-6 relative overflow-hidden backdrop-blur flex flex-col justify-between shadow-2xl">
                 {hammerActive && (
                   <div className="absolute inset-0 bg-slate-950/90 z-30 flex flex-col items-center justify-center">
@@ -1063,7 +1172,6 @@ Mohit Sharma,Bowlers & Spinners,Mystery Spinner,30000,19,40,21`;
                       <span className="text-xs text-slate-400 font-semibold uppercase">{currentPlayer?.role}</span>
                     </div>
 
-                    {/* Timer Display */}
                     <div className={`px-3 py-1 rounded-lg border font-mono font-bold text-sm flex items-center gap-1.5 ${
                       timer <= 5 ? "bg-red-500/20 border-red-500 text-red-400 animate-pulse" : "bg-slate-800 border-slate-700 text-slate-300"
                     }`}>
@@ -1071,7 +1179,6 @@ Mohit Sharma,Bowlers & Spinners,Mystery Spinner,30000,19,40,21`;
                     </div>
                   </div>
 
-                  {/* Player Bio */}
                   <div className="flex flex-col sm:flex-row gap-5 items-start sm:items-center mt-2">
                     <div className="w-24 h-24 sm:w-28 sm:h-28 rounded-2xl bg-gradient-to-tr from-slate-800 to-slate-700 border-2 border-slate-600 flex items-center justify-center text-4xl shadow-inner font-black text-amber-400">
                       {currentPlayer?.name ? currentPlayer.name.charAt(0) : "?"}
@@ -1093,19 +1200,9 @@ Mohit Sharma,Bowlers & Spinners,Mystery Spinner,30000,19,40,21`;
                               Runs: <b className="text-white">{currentPlayer.stats.runs}</b>
                             </span>
                           )}
-                          {currentPlayer.stats.sr !== undefined && (
-                            <span className="text-xs bg-slate-800 border border-slate-700 text-slate-300 px-2.5 py-1 rounded-md font-medium">
-                              SR: <b className="text-white">{currentPlayer.stats.sr}</b>
-                            </span>
-                          )}
                           {currentPlayer.stats.wickets !== undefined && (
                             <span className="text-xs bg-slate-800 border border-slate-700 text-slate-300 px-2.5 py-1 rounded-md font-medium">
                               Wkts: <b className="text-white">{currentPlayer.stats.wickets}</b>
-                            </span>
-                          )}
-                          {currentPlayer.stats.econ !== undefined && (
-                            <span className="text-xs bg-slate-800 border border-slate-700 text-slate-300 px-2.5 py-1 rounded-md font-medium">
-                              Econ: <b className="text-white">{currentPlayer.stats.econ}</b>
                             </span>
                           )}
                         </div>
@@ -1117,7 +1214,6 @@ Mohit Sharma,Bowlers & Spinners,Mystery Spinner,30000,19,40,21`;
                   </div>
                 </div>
 
-                {/* Price Banner */}
                 <div className="mt-6 bg-slate-950/80 border border-slate-800 rounded-xl p-4 flex flex-wrap items-center justify-between gap-4">
                   <div>
                     <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Current Highest Bid</span>
@@ -1143,7 +1239,6 @@ Mohit Sharma,Bowlers & Spinners,Mystery Spinner,30000,19,40,21`;
               {/* Action Panels */}
               <div className="lg:col-span-5 flex flex-col gap-4">
                 
-                {/* Auctioneer Controls */}
                 {role === "auctioneer" && (
                   <div className="bg-slate-900/90 border border-amber-500/30 rounded-2xl p-5 backdrop-blur shadow-xl">
                     <div className="flex items-center justify-between pb-3 border-b border-slate-800 mb-4">
@@ -1233,7 +1328,7 @@ Mohit Sharma,Bowlers & Spinners,Mystery Spinner,30000,19,40,21`;
                   </div>
                 )}
 
-                {/* Captain Interactive Paddle & Purchased Squad View */}
+                {/* Captain Paddle */}
                 {role === "captain" && (
                   <div className="flex flex-col gap-4">
                     
@@ -1312,7 +1407,7 @@ Mohit Sharma,Bowlers & Spinners,Mystery Spinner,30000,19,40,21`;
                       )}
                     </div>
 
-                    {/* Purchased Players Section for Captains */}
+                    {/* Purchased Squad View */}
                     {myCaptainTeam && (
                       <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-5 backdrop-blur shadow-xl">
                         <div className="flex items-center justify-between pb-3 border-b border-slate-800 mb-3">
@@ -1388,7 +1483,7 @@ Mohit Sharma,Bowlers & Spinners,Mystery Spinner,30000,19,40,21`;
                   </div>
                 )}
 
-                {/* Spectator Big Screen Banner */}
+                {/* Big Screen Spectator Mode */}
                 {role === "spectator" && (
                   <div className="bg-slate-900/40 border border-slate-800 rounded-2xl p-5 text-center">
                     <Dices className="w-8 h-8 text-amber-400 mx-auto mb-2 opacity-80 animate-spin" />
@@ -1399,7 +1494,7 @@ Mohit Sharma,Bowlers & Spinners,Mystery Spinner,30000,19,40,21`;
                   </div>
                 )}
 
-                {/* Live Bid Activity Log */}
+                {/* Bid History */}
                 <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-4">
                   <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-3 flex items-center justify-between">
                     <span>Recent Bid Ticker</span>
@@ -1428,7 +1523,7 @@ Mohit Sharma,Bowlers & Spinners,Mystery Spinner,30000,19,40,21`;
               </div>
             </section>
 
-            {/* Current Active Slot Player Pool Summary */}
+            {/* Active Slot Summary */}
             <section className="bg-slate-900/40 border border-slate-800 rounded-2xl p-4 md:p-5">
               <div className="flex items-center justify-between mb-4">
                 <h3 className="font-black text-sm uppercase text-slate-300 flex items-center gap-2">
@@ -1483,9 +1578,7 @@ Mohit Sharma,Bowlers & Spinners,Mystery Spinner,30000,19,40,21`;
 
       </main>
 
-      {/* ============================================================ */}
-      {/* AUCTIONEER 5-TAB CONTROL CENTER MODAL */}
-      {/* ============================================================ */}
+      {/* AUCTIONEER 5-TAB CONTROL CENTER */}
       {controlCenterOpen && (
         <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-4">
           <div className="bg-slate-900 border border-slate-800 w-full max-w-3xl rounded-3xl p-6 shadow-2xl max-h-[90vh] flex flex-col">
@@ -1542,7 +1635,7 @@ Mohit Sharma,Bowlers & Spinners,Mystery Spinner,30000,19,40,21`;
               </button>
             </div>
 
-            {/* TAB 1: CATEGORY SLOTS MANAGER */}
+            {/* TAB 1: SLOTS */}
             {activeTab === "slots" && (
               <div className="flex-1 flex flex-col overflow-hidden">
                 <form onSubmit={(e) => {
@@ -1605,28 +1698,10 @@ Mohit Sharma,Bowlers & Spinners,Mystery Spinner,30000,19,40,21`;
               </div>
             )}
 
-            {/* TAB 2: TEAMS MANAGER */}
+            {/* TAB 2: TEAMS */}
             {activeTab === "teams" && (
               <div className="flex-1 flex flex-col overflow-hidden">
-                <form onSubmit={(e) => {
-                  e.preventDefault();
-                  if (!newTeamName.trim()) return;
-                  const newTeam = {
-                    id: "t_" + Date.now(),
-                    name: newTeamName.trim(),
-                    pin: newTeamPin.trim() || "0000",
-                    purse: Number(newTeamPurse) || 1000000,
-                    initialPurse: Number(newTeamPurse) || 1000000,
-                    players: [],
-                    border: newTeamBorder,
-                    captainId: null
-                  };
-                  const updatedTeams = [...teams, newTeam];
-                  setTeams(updatedTeams);
-                  syncToFirebase({ teams: updatedTeams });
-                  setNewTeamName("");
-                  setNewTeamPin("");
-                }} className="p-4 bg-slate-950 rounded-2xl border border-slate-800 my-4 space-y-3">
+                <form onSubmit={handleAddTeam} className="p-4 bg-slate-950 rounded-2xl border border-slate-800 my-4 space-y-3">
                   <span className="text-[11px] font-extrabold uppercase text-amber-400 tracking-wider block">Add New Franchise</span>
                   
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
@@ -1706,11 +1781,7 @@ Mohit Sharma,Bowlers & Spinners,Mystery Spinner,30000,19,40,21`;
                             <span className="text-[10px] text-slate-500 italic">Has Players</span>
                           ) : (
                             <button
-                              onClick={() => {
-                                const updated = teams.filter((team) => team.id !== t.id);
-                                setTeams(updated);
-                                syncToFirebase({ teams: updated });
-                              }}
+                              onClick={() => handleRemoveTeam(t.id)}
                               className="p-1.5 text-rose-400 hover:bg-rose-500/10 rounded-lg transition"
                               title="Delete Team"
                             >
@@ -1725,38 +1796,10 @@ Mohit Sharma,Bowlers & Spinners,Mystery Spinner,30000,19,40,21`;
               </div>
             )}
 
-            {/* TAB 3: PLAYERS MANAGER */}
+            {/* TAB 3: PLAYERS */}
             {activeTab === "players" && (
               <div className="flex-1 flex flex-col overflow-hidden">
-                <form onSubmit={(e) => {
-                  e.preventDefault();
-                  if (!newPlayerName.trim()) return;
-                  const categoryToAssign = newPlayerCategory || (slots[0] ? slots[0].name : "General");
-                  const newPlayer = {
-                    id: "p_" + Date.now(),
-                    name: newPlayerName.trim(),
-                    category: categoryToAssign,
-                    role: newPlayerRole.trim() || categoryToAssign,
-                    basePrice: Number(newPlayerBasePrice) || minSlotReservePrice,
-                    stats: {
-                      matches: Number(newPlayerMatches) || 0,
-                      ...(newPlayerRuns !== "" && { runs: Number(newPlayerRuns) }),
-                      ...(newPlayerWickets !== "" && { wickets: Number(newPlayerWickets) })
-                    },
-                    status: "UP_FOR_BID",
-                    soldPrice: 0,
-                    soldTo: null,
-                    round: 1,
-                    isCaptain: false
-                  };
-                  const updated = [...players, newPlayer];
-                  setPlayers(updated);
-                  syncToFirebase({ players: updated });
-                  setNewPlayerName("");
-                  setNewPlayerRole("");
-                  setNewPlayerRuns("");
-                  setNewPlayerWickets("");
-                }} className="p-4 bg-slate-950 rounded-2xl border border-slate-800 my-4 space-y-3">
+                <form onSubmit={handleAddPlayer} className="p-4 bg-slate-950 rounded-2xl border border-slate-800 my-4 space-y-3">
                   <span className="text-[11px] font-extrabold uppercase text-amber-400 tracking-wider block">Add Player</span>
                   
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
@@ -1863,11 +1906,7 @@ Mohit Sharma,Bowlers & Spinners,Mystery Spinner,30000,19,40,21`;
                             <span className="text-[10px] text-slate-500 font-semibold italic">Locked</span>
                           ) : (
                             <button
-                              onClick={() => {
-                                const updated = players.filter((item) => item.id !== p.id);
-                                setPlayers(updated);
-                                syncToFirebase({ players: updated });
-                              }}
+                              onClick={() => handleRemovePlayer(p.id)}
                               className="p-1.5 text-rose-400 hover:bg-rose-500/10 rounded-lg transition"
                               title="Remove Player"
                             >
@@ -1882,7 +1921,7 @@ Mohit Sharma,Bowlers & Spinners,Mystery Spinner,30000,19,40,21`;
               </div>
             )}
 
-            {/* TAB 4: BULK CSV IMPORT */}
+            {/* TAB 4: BULK CSV */}
             {activeTab === "bulk" && (
               <div className="flex-1 p-4 bg-slate-950 rounded-2xl border border-slate-800 my-4 flex flex-col gap-3">
                 <div className="flex items-center justify-between">
@@ -1915,7 +1954,7 @@ Mohit Sharma,Bowlers & Spinners,Mystery Spinner,30000,19,40,21`;
               </div>
             )}
 
-            {/* TAB 5: BUDGET & ROSTER RULES */}
+            {/* TAB 5: RULES */}
             {activeTab === "rules" && (
               <div className="flex-1 p-4 bg-slate-950 rounded-2xl border border-slate-800 my-4 space-y-5">
                 <div>
